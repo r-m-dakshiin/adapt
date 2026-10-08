@@ -1260,23 +1260,120 @@ const demoApi = async (p,o) => {
   if(p==='/ingest/summary') return DEMO.sum;
   if(p==='/feed/events') return {events:DEMO.events};
   if(p==='/execute/recommendations') return DEMO.recs;
-  if(p==='/diagnose/full') return {anomalies:DEMO.anoms,drivers:DEMO.drivers,narrative:'meta|SKU-A ROAS fell 44% vs baseline (z=−4.1), driven mainly by conversion rate and CPA. TikTok SKU-C is outperforming with strong margin and stock; shifting budget there is the highest-value move.',recommendations:DEMO.recs,top_opportunities:DEMO.opps};
-  if(p==='/simulate/loop'){
-    // Check if there are any executed/simulated recs — if so, advance to next loop state
-    const anyExecuted = S.recs.some(r=>r.status==='executed'||r.status==='simulated');
-    if(anyExecuted && DEMO_LOOPS.length > 0){
-      const state = DEMO_LOOPS[Math.min(_demoLoopIdx, DEMO_LOOPS.length-1)];
-      _demoLoopIdx = Math.min(_demoLoopIdx+1, DEMO_LOOPS.length-1);
-      // Refresh DEMO.recs with new recs so subsequent /execute/recommendations returns them too
-      DEMO.recs = state.recommendations.map(r=>({...r}));
-      return {anomalies:state.anomalies,drivers:state.drivers,narrative:state.narrative,recommendations:state.recommendations,top_opportunities:state.top_opportunities};
+
+  if(p==='/diagnose/full' || p==='/simulate/loop'){
+    // Pick base anomaly/driver state
+    let anomalies, drivers, top_opportunities;
+    if(p==='/simulate/loop'){
+      const anyExecuted = S.recs.some(r=>r.status==='executed'||r.status==='simulated');
+      if(anyExecuted && DEMO_LOOPS.length > 0){
+        const state = DEMO_LOOPS[Math.min(_demoLoopIdx, DEMO_LOOPS.length-1)];
+        _demoLoopIdx = Math.min(_demoLoopIdx+1, DEMO_LOOPS.length-1);
+        anomalies = state.anomalies; drivers = state.drivers; top_opportunities = state.top_opportunities;
+      } else {
+        anomalies = DEMO.anoms; drivers = DEMO.drivers; top_opportunities = DEMO.opps;
+      }
+    } else {
+      anomalies = DEMO.anoms; drivers = DEMO.drivers; top_opportunities = DEMO.opps;
     }
-    return {anomalies:DEMO.anoms,drivers:DEMO.drivers,narrative:'meta|SKU-A ROAS fell 44% vs baseline (z=−4.1), driven mainly by conversion rate and CPA. TikTok SKU-C is outperforming with strong margin and stock; shifting budget there is the highest-value move.',recommendations:DEMO.recs,top_opportunities:DEMO.opps};
+
+    // Try LLM for narrative + recommendations
+    try {
+      const llm = await llmAnalyse(anomalies, drivers, S.execs, S.execs.filter(e=>e.out));
+      const recs = (llm.recommendations||[]).map(r=>({...r, status:'pending'}));
+      DEMO.recs = recs;
+      return { anomalies, drivers, narrative: llm.narrative, recommendations: recs, top_opportunities };
+    } catch(err) {
+      console.warn('OpenRouter fallback:', err.message);
+      // Fallback to hardcoded
+      const fallbackNarrative = p==='/simulate/loop' && _demoLoopIdx > 0
+        ? DEMO_LOOPS[Math.min(_demoLoopIdx-1, DEMO_LOOPS.length-1)].narrative
+        : 'meta|SKU-A ROAS fell 44% vs baseline (z=−4.1), driven mainly by conversion rate and CPA. TikTok SKU-C is outperforming with strong margin and stock; shifting budget there is the highest-value move.';
+      const fallbackRecs = p==='/simulate/loop' && _demoLoopIdx > 0
+        ? DEMO_LOOPS[Math.min(_demoLoopIdx-1, DEMO_LOOPS.length-1)].recommendations
+        : DEMO.recs;
+      DEMO.recs = fallbackRecs.map(r=>({...r, status:'pending'}));
+      return { anomalies, drivers, narrative: fallbackNarrative, recommendations: DEMO.recs, top_opportunities };
+    }
   }
-  if(p==='/execute/run'){const r=DEMO.recs.find(x=>x.id===b.recommendation_id);if(r)r.status='executed';return{success:true,platform:'meta',request:{},response:{status:'simulated'},message:'executed'};}
+
+  if(p==='/execute/run'){const r=DEMO.recs.find(x=>x.id===b.recommendation_id);if(r)r.status='executed';return{success:true,platform:b.platform||'meta',request:{},response:{status:'simulated'},message:'executed'};}
   if(p==='/feed/feedback') return {...b,uplift:(b.post_value-b.pre_value)/b.pre_value*100};
   throw new Error('Not available in demo');
 };
+
+/* ── OpenRouter LLM — called directly from frontend in demo mode ── */
+const OR_KEY = 'REDACTED_KEY';
+const OR_MODEL = 'nvidia/nemotron-3.5-lightning:free';
+
+async function llmAnalyse(anomalies, drivers, executions, feedback) {
+  const anomSummary = anomalies.map(a =>
+    `${a.entity_id}: ${a.metric} ${a.delta_pct>0?'+':''}${a.delta_pct}% (z=${a.z_score}, ${a.severity})`
+  ).join('\n');
+  const drvSummary = drivers.map(d => `${d.driver}: correlation ${d.correlation}`).join(', ');
+  const execSummary = executions && executions.length
+    ? executions.map(e => `${e.move} — ${e.out ? 'ROAS uplift: '+e.out.uplift?.toFixed(1)+'%' : 'no outcome logged'}`).join('\n')
+    : 'None yet';
+  const fbSummary = feedback && feedback.length
+    ? feedback.map(f => `${f.move}: pre=${f.pre}, post ROAS logged`).join('\n')
+    : 'None';
+
+  const prompt = `You are an autonomous D2C ad-spend optimisation engine. Analyse the following data and return a JSON object (no markdown, no explanation — raw JSON only).
+
+ANOMALIES:
+${anomSummary}
+
+DRIVERS (correlation with ROAS):
+${drvSummary}
+
+RECENT EXECUTIONS:
+${execSummary}
+
+Return this exact JSON shape:
+{
+  "narrative": "<2-3 sentence plain-English briefing of the current situation and what changed>",
+  "recommendations": [
+    {
+      "id": <integer starting from ${Date.now() % 1000}>,
+      "action": "<reallocate|reduce|increase|pause>",
+      "from_entity": "<platform|SKU or null>",
+      "to_entity": "<platform|SKU or null>",
+      "delta_budget": <integer INR amount>,
+      "confidence": <0.0-1.0>,
+      "rationale": "<one clear sentence why>"
+    }
+  ]
+}
+
+Rules:
+- Generate 2-4 recommendations based purely on the anomaly data
+- confidence should reflect z-score magnitude
+- delta_budget in INR (5000–25000 range)
+- from_entity/to_entity use format "platform|SKU" or null
+- Return ONLY the JSON, nothing else`;
+
+  const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${OR_KEY}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'http://localhost:8000',
+      'X-Title': 'ADAPT Engine',
+    },
+    body: JSON.stringify({
+      model: OR_MODEL,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.4,
+      max_tokens: 800,
+    }),
+  });
+  if (!resp.ok) throw new Error('OpenRouter: ' + resp.status);
+  const data = await resp.json();
+  const raw = data.choices?.[0]?.message?.content?.trim() || '';
+  // Strip any accidental markdown fences
+  const clean = raw.replace(/^```[a-z]*\n?/,'').replace(/\n?```$/,'').trim();
+  return JSON.parse(clean);
+}
 
 const baseUrl = () => ($('#apiUrl').value||'http://localhost:8000').trim().replace(/\/$/,'');
 
