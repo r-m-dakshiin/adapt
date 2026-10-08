@@ -879,6 +879,8 @@ td.dim { color: var(--ink2); font-size: 12px; max-width: 280px; }
 .section-block:nth-child(5) .sh-num { color: var(--violet); }
 .section-block:nth-child(6) .sh { border-bottom-color: rgba(82,201,138,0.35); }
 .section-block:nth-child(6) .sh-num { color: var(--green); }
+.section-block:nth-child(7) .sh { border-bottom-color: rgba(62,184,168,0.35); }
+.section-block:nth-child(7) .sh-num { color: var(--teal); }
 
 /* Panel left-border accent on hover */
 .panel { position: relative; }
@@ -900,6 +902,114 @@ td.dim { color: var(--ink2); font-size: 12px; max-width: 280px; }
 .section-block:nth-child(4) .panel:hover::before { background: var(--teal); }
 .section-block:nth-child(5) .panel:hover::before { background: var(--violet); }
 .section-block:nth-child(6) .panel:hover::before { background: var(--green); }
+.section-block:nth-child(7) .panel:hover::before { background: var(--teal); }
+
+/* ── Agent pipeline ── */
+.agent-pipeline {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 2px;
+  margin-bottom: 2px;
+}
+@media (max-width: 960px) { .agent-pipeline { grid-template-columns: 1fr; } }
+.agent-card {
+  border: 1px solid var(--ink3);
+  padding: 28px 24px;
+  position: relative;
+  overflow: hidden;
+  transition: background 0.3s, opacity 0.6s cubic-bezier(0.16,1,0.3,1), transform 0.6s cubic-bezier(0.16,1,0.3,1);
+  opacity: 0;
+  transform: translateY(32px);
+}
+.agent-card.visible { opacity: 1; transform: translateY(0); }
+.agent-card:hover { background: var(--ink4); }
+.agent-card::after {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 2px;
+  background: var(--agent-color, var(--ink3));
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.4s cubic-bezier(0.16,1,0.3,1);
+}
+.agent-card:hover::after,
+.agent-card.active::after { transform: scaleX(1); }
+.agent-card.running-now::after {
+  transform: scaleX(1);
+  animation: barSweep 0.8s ease-in-out infinite alternate;
+}
+@keyframes barSweep {
+  from { transform: scaleX(0.3); transform-origin: left; }
+  to   { transform: scaleX(1);   transform-origin: left; }
+}
+.agent-card.active { background: var(--ink4); }
+.agent-num {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  margin-bottom: 20px;
+}
+.agent-icon {
+  font-size: 20px;
+  margin-bottom: 16px;
+  line-height: 1;
+  transition: transform 0.3s cubic-bezier(0.34,1.56,0.64,1);
+}
+.agent-card.running-now .agent-icon { animation: iconSpin 1.2s linear infinite; }
+@keyframes iconSpin { to { transform: rotate(360deg); } }
+.agent-name {
+  font-family: var(--serif);
+  font-size: 22px;
+  color: var(--ink);
+  margin-bottom: 8px;
+}
+.agent-desc {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--ink2);
+  line-height: 1.6;
+  margin-bottom: 20px;
+  min-height: 32px;
+}
+.agent-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink3);
+}
+.agent-pip {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--ink3);
+  flex-shrink: 0;
+  transition: background 0.4s, box-shadow 0.4s;
+}
+.agent-pip.idle    { background: var(--ink3); }
+.agent-pip.ok      { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.agent-pip.warn    { background: var(--yellow); box-shadow: 0 0 8px var(--yellow); }
+.agent-pip.running {
+  background: var(--blue);
+  box-shadow: 0 0 8px var(--blue);
+  animation: pipPulse 0.7s ease-in-out infinite;
+}
+@keyframes pipPulse { 0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.3;transform:scale(0.6)} }
+.agent-last {
+  margin-top: 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink3);
+  letter-spacing: 0.04em;
+  transition: color 0.4s;
+}
+.agent-card.active .agent-last { color: var(--ink2); }
 </style>
 </head>
 <body>
@@ -1064,6 +1174,17 @@ td.dim { color: var(--ink2); font-size: 12px; max-width: 280px; }
     </div>
   </div>
 
+  <!-- 06 · Agent Pipeline -->
+  <div class="section-block">
+    <div class="section-num" data-parallax="0.05">06</div>
+    <div class="sh fade-up">
+      <span class="sh-num">06</span>
+      <h2 class="sh-title">Agent Pipeline</h2>
+      <span class="sh-meta" id="pipe-meta"></span>
+    </div>
+    <div class="agent-pipeline" id="agentPipeline"></div>
+  </div>
+
 </div>
 
 <div id="toasts"></div>
@@ -1084,9 +1205,53 @@ const DEMO = {
   drivers:[{driver:'cvr',correlation:.84},{driver:'cpa',correlation:-.71},{driver:'sessions',correlation:.38},{driver:'inventory_units',correlation:-.12}],
   opps:[{platform:'tiktok',sku:'SKU-C',conversion_probability:.81,opportunity_score:.79,margin_pct:.5,stockout_risk:9.2},{platform:'amazon',sku:'SKU-A',conversion_probability:.74,opportunity_score:.69,margin_pct:.45,stockout_risk:6.1},{platform:'meta',sku:'SKU-D',conversion_probability:.7,opportunity_score:.55,margin_pct:.55,stockout_risk:.9}],
   recs:[{id:1,action:'reallocate',from_entity:'meta|SKU-A',to_entity:'tiktok|SKU-C',delta_budget:18000,confidence:.87,rationale:'Meta SKU-A conversion collapsed (−44%); TikTok SKU-C converts better with healthy margin and stock.',status:'pending'},{id:2,action:'reduce',from_entity:'google|SKU-B',to_entity:null,delta_budget:9000,confidence:.78,rationale:'CPC spike eroding ROAS; trim spend until auction cost normalises.',status:'pending'}],
-  events:[{kind:'ingest',entity_id:'reconciler',severity:'info',ts:new Date().toISOString()},{kind:'diagnose',entity_id:'meta|SKU-A',severity:'warning',ts:new Date().toISOString()}],
+  events:[{kind:'ingest',entity_id:'reconciler',severity:'info',ts:new Date().toISOString()},{kind:'diagnose',entity_id:'meta|SKU-A',severity:'warning',ts:new Date().toISOString()},{kind:'score',entity_id:'tiktok|SKU-C',severity:'info',ts:new Date(Date.now()-60000).toISOString()},{kind:'execute',entity_id:'meta|SKU-A → tiktok|SKU-C',severity:'info',ts:new Date(Date.now()-120000).toISOString()},{kind:'learn',entity_id:'feedback-loop',severity:'info',ts:new Date(Date.now()-180000).toISOString()}],
   sum:{rows:1440,platforms:['amazon','google','meta','tiktok'],skus:['SKU-A','SKU-B','SKU-C','SKU-D'],date_range:['2026-08-24','2026-10-07']}
 };
+
+// Evolved states returned after each subsequent loop run
+const DEMO_LOOPS = [
+  // Loop 1 — after initial recs executed: TikTok scaling paid off, Amazon opportunity emerges
+  {
+    anomalies:[
+      {entity_id:'tiktok|SKU-C',platform:'tiktok',metric:'roas',current:6.8,baseline:5.1,delta_pct:33,z_score:3.2,severity:'warning'},
+      {entity_id:'amazon|SKU-A',platform:'amazon',metric:'roas',current:2.1,baseline:3.8,delta_pct:-45,z_score:-4.4,severity:'critical'},
+      {entity_id:'meta|SKU-D',platform:'meta',metric:'roas',current:4.2,baseline:3.6,delta_pct:17,z_score:2.1,severity:'warning'},
+    ],
+    drivers:[{driver:'cvr',correlation:.91},{driver:'sessions',correlation:.62},{driver:'cpa',correlation:-.44},{driver:'inventory_units',correlation:-.28}],
+    narrative:'TikTok SKU-C reallocation succeeded — ROAS up 33% to 6.8. Amazon SKU-A is now the critical underperformer (z=−4.4), likely driven by rising CPC and low CVR. Meta SKU-D showing positive momentum; consider modest budget increase.',
+    recommendations:[
+      {id:3,action:'reduce',from_entity:'amazon|SKU-A',to_entity:null,delta_budget:12000,confidence:.91,rationale:'Amazon SKU-A ROAS collapsed post-reallocation. CPC inflation not offset by conversion. Cut spend and monitor.',status:'pending'},
+      {id:4,action:'increase',from_entity:null,to_entity:'tiktok|SKU-C',delta_budget:8000,confidence:.83,rationale:'TikTok SKU-C is outperforming baseline by 33% — increase budget to capture momentum before saturation.',status:'pending'},
+      {id:5,action:'increase',from_entity:null,to_entity:'meta|SKU-D',delta_budget:5000,confidence:.74,rationale:'Meta SKU-D CVR improving; small budget increase to validate trend before scaling.',status:'pending'},
+    ],
+    top_opportunities:[
+      {platform:'tiktok',sku:'SKU-C',conversion_probability:.88,opportunity_score:.91,margin_pct:.5,stockout_risk:12.1},
+      {platform:'meta',sku:'SKU-D',conversion_probability:.73,opportunity_score:.67,margin_pct:.55,stockout_risk:2.1},
+      {platform:'google',sku:'SKU-B',conversion_probability:.61,opportunity_score:.48,margin_pct:.38,stockout_risk:4.4},
+    ],
+  },
+  // Loop 2 — budget cuts on Amazon worked, portfolio nearly balanced
+  {
+    anomalies:[
+      {entity_id:'tiktok|SKU-C',platform:'tiktok',metric:'roas',current:7.1,baseline:6.8,delta_pct:4,z_score:1.1,severity:'ok'},
+      {entity_id:'meta|SKU-D',platform:'meta',metric:'roas',current:4.9,baseline:4.2,delta_pct:17,z_score:2.0,severity:'warning'},
+      {entity_id:'google|SKU-B',platform:'google',metric:'roas',current:3.5,baseline:3.9,delta_pct:-10,z_score:-1.4,severity:'ok'},
+    ],
+    drivers:[{driver:'cvr',correlation:.88},{driver:'inventory_units',correlation:.54},{driver:'sessions',correlation:.41},{driver:'cpa',correlation:-.22}],
+    narrative:'Portfolio largely stabilised. TikTok SKU-C holding at 7.1x ROAS — near saturation, watch for diminishing returns. Meta SKU-D trending up consistently. Google SKU-B mild underperformance within normal variance. No critical action required; optimise margins.',
+    recommendations:[
+      {id:6,action:'reallocate',from_entity:'google|SKU-B',to_entity:'meta|SKU-D',delta_budget:6000,confidence:.77,rationale:'Google SKU-B mildly underperforming; reallocate to Meta SKU-D which shows consistent CVR improvement.',status:'pending'},
+      {id:7,action:'reduce',from_entity:'tiktok|SKU-C',to_entity:null,delta_budget:4000,confidence:.68,rationale:'TikTok SKU-C approaching saturation (ROAS growth slowing). Small trim to protect efficiency.',status:'pending'},
+    ],
+    top_opportunities:[
+      {platform:'meta',sku:'SKU-D',conversion_probability:.79,opportunity_score:.82,margin_pct:.55,stockout_risk:1.8},
+      {platform:'tiktok',sku:'SKU-C',conversion_probability:.85,opportunity_score:.74,margin_pct:.5,stockout_risk:18.3},
+      {platform:'amazon',sku:'SKU-B',conversion_probability:.66,opportunity_score:.58,margin_pct:.42,stockout_risk:3.2},
+    ],
+  },
+];
+let _demoLoopIdx = 0;
 
 const demoApi = async (p,o) => {
   await new Promise(r=>setTimeout(r,400));
@@ -1095,7 +1260,19 @@ const demoApi = async (p,o) => {
   if(p==='/ingest/summary') return DEMO.sum;
   if(p==='/feed/events') return {events:DEMO.events};
   if(p==='/execute/recommendations') return DEMO.recs;
-  if(p==='/diagnose/full'||p==='/simulate/loop') return {anomalies:DEMO.anoms,drivers:DEMO.drivers,narrative:'meta|SKU-A ROAS fell 44% vs baseline (z=−4.1), driven mainly by conversion rate and CPA. TikTok SKU-C is outperforming with strong margin and stock; shifting budget there is the highest-value move.',recommendations:DEMO.recs,top_opportunities:DEMO.opps};
+  if(p==='/diagnose/full') return {anomalies:DEMO.anoms,drivers:DEMO.drivers,narrative:'meta|SKU-A ROAS fell 44% vs baseline (z=−4.1), driven mainly by conversion rate and CPA. TikTok SKU-C is outperforming with strong margin and stock; shifting budget there is the highest-value move.',recommendations:DEMO.recs,top_opportunities:DEMO.opps};
+  if(p==='/simulate/loop'){
+    // Check if there are any executed/simulated recs — if so, advance to next loop state
+    const anyExecuted = S.recs.some(r=>r.status==='executed'||r.status==='simulated');
+    if(anyExecuted && DEMO_LOOPS.length > 0){
+      const state = DEMO_LOOPS[Math.min(_demoLoopIdx, DEMO_LOOPS.length-1)];
+      _demoLoopIdx = Math.min(_demoLoopIdx+1, DEMO_LOOPS.length-1);
+      // Refresh DEMO.recs with new recs so subsequent /execute/recommendations returns them too
+      DEMO.recs = state.recommendations.map(r=>({...r}));
+      return {anomalies:state.anomalies,drivers:state.drivers,narrative:state.narrative,recommendations:state.recommendations,top_opportunities:state.top_opportunities};
+    }
+    return {anomalies:DEMO.anoms,drivers:DEMO.drivers,narrative:'meta|SKU-A ROAS fell 44% vs baseline (z=−4.1), driven mainly by conversion rate and CPA. TikTok SKU-C is outperforming with strong margin and stock; shifting budget there is the highest-value move.',recommendations:DEMO.recs,top_opportunities:DEMO.opps};
+  }
   if(p==='/execute/run'){const r=DEMO.recs.find(x=>x.id===b.recommendation_id);if(r)r.status='executed';return{success:true,platform:'meta',request:{},response:{status:'simulated'},message:'executed'};}
   if(p==='/feed/feedback') return {...b,uplift:(b.post_value-b.pre_value)/b.pre_value*100};
   throw new Error('Not available in demo');
@@ -1122,7 +1299,7 @@ function toast(msg,type='i'){
   setTimeout(()=>el.remove(),5000);
 }
 
-let S={anoms:[],drivers:[],narr:'',recs:[],opps:[],events:[],sum:null,execs:[],sel:0,loading:false};
+let S={anoms:[],drivers:[],narr:'',recs:[],opps:[],events:DEMO.events,sum:null,execs:[],sel:0,loading:false};
 
 function render(){
   const{anoms,drivers,narr,recs,opps,events,execs,sum,sel,loading}=S;
@@ -1187,6 +1364,61 @@ function render(){
   $('#feed').innerHTML=events.length
     ?events.map(e=>`<div class="feed-item"><span class="tag ${esc(e.severity==='warning'?'warning':'info')}">${esc(e.kind)}</span><span style="font-size:12px">${esc(e.entity_id||'')}</span><span class="feed-time">${esc(ago(e.ts||e.created_at))}</span></div>`).join('')
     :'<div class="empty">No events yet</div>';
+
+  // Agent Pipeline
+  const AGENTS = [
+    { key:'ingest',   label:'Ingest',    icon:'⬇', color:'var(--blue)',   desc:'Load & reconcile ad spend, GA events, inventory, sales' },
+    { key:'diagnose', label:'Diagnose',  icon:'⚡', color:'var(--orange)', desc:'Anomaly detection & z-score analysis across all entities' },
+    { key:'score',    label:'Optimise',  icon:'◎', color:'var(--teal)',   desc:'Causal attribution, opportunity scoring, margin analysis' },
+    { key:'execute',  label:'Execute',   icon:'▶', color:'var(--violet)', desc:'Budget reallocations pushed to ad platform APIs' },
+    { key:'learn',    label:'Learn',     icon:'↺', color:'var(--green)',  desc:'Feedback loop — ROAS uplift logged, models updated' },
+  ];
+  const lastByKind = {};
+  events.forEach(e => { if(!lastByKind[e.kind]) lastByKind[e.kind] = e; });
+  const runningKind = loading ? (events[0]?.kind || null) : null;
+  $('#agentPipeline').innerHTML = AGENTS.map((ag,i) => {
+    const last = lastByKind[ag.key];
+    const isRunning = runningKind === ag.key;
+    const hasRun = !!last;
+    const pipClass = isRunning ? 'running' : hasRun ? (last.severity==='warning'?'warn':'ok') : 'idle';
+    const statusLabel = isRunning ? 'running' : hasRun ? (last.severity==='warning'?'warning':'ready') : 'idle';
+    const lastTime = last ? ago(last.ts||last.created_at) : '—';
+    return `<div class="agent-card${hasRun?' active':''}${isRunning?' running-now':''}" style="--agent-color:${ag.color};transition-delay:${i*0.1}s" data-agent="${ag.key}">
+      <div class="agent-num">${String(i+1).padStart(2,'0')}</div>
+      <div class="agent-icon">${ag.icon}</div>
+      <div class="agent-name">${ag.label}</div>
+      <div class="agent-desc">${ag.desc}</div>
+      <div class="agent-status"><span class="agent-pip ${pipClass}"></span>${statusLabel}</div>
+      <div class="agent-last">Last run: ${lastTime}</div>
+    </div>`;
+  }).join('');
+  $('#pipe-meta').textContent = events.length ? events.length + ' events' : '';
+
+  // Animate cards in via IntersectionObserver (staggered)
+  const pipeline = $('#agentPipeline');
+  if (pipeline && !pipeline._observed) {
+    pipeline._observed = true;
+    const obs = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        pipeline.querySelectorAll('.agent-card').forEach((c, i) => {
+          if (entry.isIntersecting) {
+            setTimeout(() => c.classList.add('visible'), i * 100);
+          } else {
+            c.classList.remove('visible');
+          }
+        });
+      });
+    }, { threshold: 0.05 });
+    obs.observe(pipeline);
+  } else if (pipeline) {
+    // Already observed — just ensure cards that exist are visible if already in view
+    const rect = pipeline.getBoundingClientRect();
+    if (rect.top < window.innerHeight) {
+      pipeline.querySelectorAll('.agent-card').forEach((c, i) => {
+        setTimeout(() => c.classList.add('visible'), i * 100);
+      });
+    }
+  }
 }
 
 function applyResponse(d){
@@ -1205,8 +1437,54 @@ async function loadSide(){
 async function runEngine(kind){
   S.loading=true;render();
   document.querySelectorAll('header button').forEach(b=>b.disabled=true);
-  try{const d=await api(kind==='loop'?'/simulate/loop':'/diagnose/full',{method:'POST'});applyResponse(d);S.loading=false;render();await loadSide();toast(kind==='loop'?'Full loop complete':'Diagnosis complete','s');}
-  catch(e){S.loading=false;render();toast(e.message,'e');}
+
+  // For 'loop', animate each agent stage in sequence
+  if(kind==='loop'){
+    const AGENT_KEYS=['ingest','diagnose','score','execute','learn'];
+    const stepMs=600;
+    for(let i=0;i<AGENT_KEYS.length;i++){
+      const k=AGENT_KEYS[i];
+      // Mark this agent as running in the DOM directly (fast, no full re-render)
+      document.querySelectorAll('.agent-card').forEach(c=>{
+        c.classList.remove('running-now');
+        const pip=c.querySelector('.agent-pip');
+        if(pip&&c.dataset.agent!==k){pip.className='agent-pip '+(c.classList.contains('active')?'ok':'idle');}
+      });
+      const runCard=document.querySelector(`.agent-card[data-agent="${k}"]`);
+      if(runCard){
+        runCard.classList.add('running-now');
+        const pip=runCard.querySelector('.agent-pip');
+        const lbl=runCard.querySelector('.agent-status');
+        if(pip) pip.className='agent-pip running';
+        if(lbl) lbl.innerHTML=`<span class="agent-pip running"></span>running`;
+      }
+      await new Promise(r=>setTimeout(r,stepMs));
+      // Mark done
+      if(runCard){
+        runCard.classList.remove('running-now');
+        runCard.classList.add('active');
+        const pip=runCard.querySelector('.agent-pip');
+        const lbl=runCard.querySelector('.agent-status');
+        const lastEl=runCard.querySelector('.agent-last');
+        if(pip) pip.className='agent-pip ok';
+        if(lbl) lbl.innerHTML=`<span class="agent-pip ok"></span>ready`;
+        if(lastEl) lastEl.textContent='Last run: just now';
+        // Inject event so future renders stay accurate
+        S.events=S.events.filter(e=>e.kind!==k);
+        S.events.unshift({kind:k,entity_id:k==='ingest'?'reconciler':k==='diagnose'?'meta|SKU-A':k==='score'?'tiktok|SKU-C':k==='execute'?'meta|SKU-A → tiktok|SKU-C':'feedback-loop',severity:'info',ts:new Date().toISOString()});
+      }
+      await new Promise(r=>setTimeout(r,80));
+    }
+  }
+
+  try{
+    const d=await api(kind==='loop'?'/simulate/loop':'/diagnose/full',{method:'POST'});
+    applyResponse(d);
+    // On loop: clear previous executions so Activity section reflects the new cycle
+    if(kind==='loop') S.execs=[];
+    S.loading=false;render();await loadSide();
+    toast(kind==='loop'?'Full loop complete':'Diagnosis complete','s');
+  }catch(e){S.loading=false;render();toast(e.message,'e');}
   document.querySelectorAll('header button').forEach(b=>b.disabled=false);
 }
 
@@ -1272,8 +1550,8 @@ function initObservers() {
     });
   }, { threshold: 0.06, rootMargin: '0px 0px -20px 0px' });
 
-  // Observe each .two and .three grid as whole unit
-  document.querySelectorAll('.two, .three').forEach(grid => {
+  // Observe each .two, .three, and .agent-pipeline grid as whole unit
+  document.querySelectorAll('.two, .three, .agent-pipeline').forEach(grid => {
     gridObserver.observe(grid);
   });
 
