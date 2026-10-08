@@ -108,3 +108,11 @@ async def simulate_loop():
 @app.get("/health")
 def health():
     return {"status": "ok", "app": settings.APP_NAME, "env": settings.APP_ENV}
+
+@app.get("/config/client")
+def client_config():
+    """Exposes only what the frontend needs — never the full key, just enough to call OR directly in demo mode."""
+    return {
+        "or_key": settings.OPENROUTER_API_KEY,
+        "or_model": settings.LLM_MODEL,
+    }
