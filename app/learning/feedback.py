@@ -1,12 +1,17 @@
-from app.database import insert_feedback, log_event
+from datetime import datetime, timezone
+
+_feedback: list[dict] = []
+_fb_seq = 0
 
 
 def record_outcome(execution_id, metric, pre_value, post_value,
                    window_hours=24, notes=None):
-    uplift = 0.0
-    if pre_value:
-        uplift = (post_value - pre_value) / pre_value * 100
+    global _fb_seq
+    _fb_seq += 1
+    uplift = ((post_value - pre_value) / pre_value * 100) if pre_value else 0.0
     row = {
+        "id": _fb_seq,
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
         "execution_id": execution_id,
         "metric": metric,
         "pre_value": pre_value,
@@ -15,12 +20,5 @@ def record_outcome(execution_id, metric, pre_value, post_value,
         "window_hours": window_hours,
         "notes": notes,
     }
-    saved = insert_feedback(row)
-    log_event(
-        kind="feedback",
-        entity_type="execution",
-        entity_id=str(execution_id),
-        payload=saved,
-        severity="info",
-    )
-    return saved
+    _feedback.append(row)
+    return row

@@ -1017,6 +1017,22 @@ td.dim { color: var(--ink2); font-size: 12px; max-width: 280px; }
   transition: color 0.4s;
 }
 .agent-card.active .agent-last { color: var(--ink2); }
+
+/* ── Loop history ── */
+.lh-canvas-wrap { position: relative; width: 100%; height: 280px; }
+.lh-canvas-wrap canvas { width: 100%; height: 100%; display: block; }
+.lh-legend { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 18px; }
+.lh-legend-item { display: flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink2); }
+.lh-legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.lh-delta-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 2px; margin-top: 2px; }
+.lh-delta-cell { padding: 20px 18px; border: 1px solid var(--ink3); transition: background 0.3s; }
+.lh-delta-cell:hover { background: var(--ink4); }
+.lh-delta-entity { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink2); margin-bottom: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lh-delta-val { font-family: var(--serif); font-size: 32px; line-height: 1; }
+.lh-delta-val.pos { color: var(--green); }
+.lh-delta-val.neg { color: var(--red); }
+.lh-delta-val.neu { color: var(--ink2); }
+.lh-delta-sub { margin-top: 6px; font-family: var(--mono); font-size: 10px; color: var(--ink3); letter-spacing: 0.06em; }
 </style>
 </head>
 <body>
@@ -1190,6 +1206,27 @@ td.dim { color: var(--ink2); font-size: 12px; max-width: 280px; }
       <span class="sh-meta" id="pipe-meta"></span>
     </div>
     <div class="agent-pipeline" id="agentPipeline"></div>
+  </div>
+
+  <!-- 07 · Loop History -->
+  <div class="section-block">
+    <div class="section-num" data-parallax="0.05">07</div>
+    <div class="sh fade-up">
+      <span class="sh-num">07</span>
+      <h2 class="sh-title">Loop History</h2>
+      <span class="sh-meta" id="lh-meta"></span>
+    </div>
+    <div class="two" id="lhPanels">
+      <div class="panel tilt">
+        <div class="panel-head">ROAS by entity · across loops</div>
+        <div class="lh-canvas-wrap"><canvas id="lhChart"></canvas></div>
+        <div class="lh-legend" id="lhLegend"></div>
+      </div>
+      <div class="panel tilt">
+        <div class="panel-head">Delta vs previous loop</div>
+        <div class="lh-delta-grid" id="lhDeltas"></div>
+      </div>
+    </div>
   </div>
 
 </div>
@@ -1421,7 +1458,48 @@ function toast(msg,type='i'){
   setTimeout(()=>el.remove(),5000);
 }
 
-let S={anoms:[],drivers:[],narr:'',recs:[],opps:[],events:DEMO.events,sum:null,execs:[],sel:0,loading:false};
+// Pre-seed loop history — every snapshot carries ALL entities so lines are continuous
+// Entities not anomalous in a given loop get their estimated normal ROAS
+const _seedHistory = [
+  { loop:1, label:'Baseline', ts: new Date(Date.now()-10800000).toISOString(),
+    anoms: [
+      {entity_id:'meta|SKU-A',   platform:'meta',    metric:'roas', current:1.9, baseline:3.4, delta_pct:-44, z_score:-4.1, severity:'critical'},
+      {entity_id:'google|SKU-B', platform:'google',  metric:'roas', current:2.6, baseline:3.9, delta_pct:-33, z_score:-3.3, severity:'warning'},
+      {entity_id:'tiktok|SKU-C', platform:'tiktok',  metric:'roas', current:5.1, baseline:3.7, delta_pct: 38, z_score: 3.9, severity:'warning'},
+      {entity_id:'amazon|SKU-A', platform:'amazon',  metric:'roas', current:3.8, baseline:3.8, delta_pct:  0, z_score: 0.0, severity:'ok'},
+      {entity_id:'meta|SKU-D',   platform:'meta',    metric:'roas', current:3.6, baseline:3.6, delta_pct:  0, z_score: 0.0, severity:'ok'},
+    ]
+  },
+  { loop:2, label:'Loop 1', ts: new Date(Date.now()-7200000).toISOString(),
+    anoms: [
+      {entity_id:'meta|SKU-A',   platform:'meta',    metric:'roas', current:2.3, baseline:3.4, delta_pct:-32, z_score:-2.1, severity:'warning'},
+      {entity_id:'google|SKU-B', platform:'google',  metric:'roas', current:2.8, baseline:3.9, delta_pct:-28, z_score:-2.6, severity:'warning'},
+      {entity_id:'tiktok|SKU-C', platform:'tiktok',  metric:'roas', current:6.8, baseline:5.1, delta_pct: 33, z_score: 3.2, severity:'warning'},
+      {entity_id:'amazon|SKU-A', platform:'amazon',  metric:'roas', current:2.1, baseline:3.8, delta_pct:-45, z_score:-4.4, severity:'critical'},
+      {entity_id:'meta|SKU-D',   platform:'meta',    metric:'roas', current:4.2, baseline:3.6, delta_pct: 17, z_score: 2.1, severity:'warning'},
+    ]
+  },
+  { loop:3, label:'Loop 2', ts: new Date(Date.now()-3600000).toISOString(),
+    anoms: [
+      {entity_id:'meta|SKU-A',   platform:'meta',    metric:'roas', current:2.8, baseline:3.4, delta_pct:-18, z_score:-1.2, severity:'ok'},
+      {entity_id:'google|SKU-B', platform:'google',  metric:'roas', current:3.5, baseline:3.9, delta_pct:-10, z_score:-1.4, severity:'ok'},
+      {entity_id:'tiktok|SKU-C', platform:'tiktok',  metric:'roas', current:7.1, baseline:6.8, delta_pct:  4, z_score: 1.1, severity:'ok'},
+      {entity_id:'amazon|SKU-A', platform:'amazon',  metric:'roas', current:2.9, baseline:3.8, delta_pct:-24, z_score:-2.0, severity:'warning'},
+      {entity_id:'meta|SKU-D',   platform:'meta',    metric:'roas', current:4.9, baseline:4.2, delta_pct: 17, z_score: 2.0, severity:'warning'},
+    ]
+  },
+  { loop:4, label:'Loop 3', ts: new Date(Date.now()-1800000).toISOString(),
+    anoms: [
+      {entity_id:'meta|SKU-A',   platform:'meta',    metric:'roas', current:3.2, baseline:3.4, delta_pct: -6, z_score:-0.4, severity:'ok'},
+      {entity_id:'google|SKU-B', platform:'google',  metric:'roas', current:3.8, baseline:3.9, delta_pct: -3, z_score:-0.3, severity:'ok'},
+      {entity_id:'tiktok|SKU-C', platform:'tiktok',  metric:'roas', current:7.4, baseline:7.1, delta_pct:  4, z_score: 0.8, severity:'ok'},
+      {entity_id:'amazon|SKU-A', platform:'amazon',  metric:'roas', current:3.4, baseline:3.8, delta_pct:-11, z_score:-0.9, severity:'ok'},
+      {entity_id:'meta|SKU-D',   platform:'meta',    metric:'roas', current:5.3, baseline:4.9, delta_pct:  8, z_score: 1.4, severity:'ok'},
+    ]
+  },
+];
+
+let S={anoms:[],drivers:[],narr:'',recs:[],opps:[],events:DEMO.events,sum:null,execs:[],sel:0,loading:false,history:[..._seedHistory]};
 
 function render(){
   const{anoms,drivers,narr,recs,opps,events,execs,sum,sel,loading}=S;
@@ -1560,6 +1638,130 @@ function render(){
 function applyResponse(d){
   S.anoms=d.anomalies||[];S.drivers=d.drivers||[];S.narr=d.narrative||'';S.opps=d.top_opportunities||[];S.sel=0;
   if(d.recommendations?.length) S.recs=d.recommendations;
+  // Push snapshot for loop history chart
+  if(S.anoms.length){
+    S.history.push({ loop: S.history.length+1, label:'Loop '+(S.history.length), ts:new Date().toISOString(), anoms:S.anoms.map(a=>({...a})) });
+    renderLoopHistory();
+  }
+}
+
+const ENTITY_COLORS = ['#5b8dee','#e07c40','#3eb8a8','#9b72e8','#52c98a','#d4a843','#e05252','#f2f0eb'];
+
+function renderLoopHistory(){
+  const hist = S.history;
+  const metaEl = $('#lh-meta');
+  if(metaEl) metaEl.textContent = hist.length + ' loop' + (hist.length!==1?'s':'');
+
+  // All unique entities across all snapshots
+  const allEntities = [...new Set(hist.flatMap(h=>h.anoms.map(a=>a.entity_id)))];
+
+  // ── Delta tiles (latest vs previous) ──
+  const deltasEl = $('#lhDeltas');
+  if(deltasEl){
+    if(hist.length < 2){
+      deltasEl.innerHTML='<div style="color:var(--ink3);font-family:var(--mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;padding:40px 0;grid-column:1/-1;text-align:center">Run loop to see deltas</div>';
+    } else {
+      const prev=hist[hist.length-2].anoms, curr=hist[hist.length-1].anoms;
+      deltasEl.innerHTML=allEntities.map(eid=>{
+        const p=prev.find(a=>a.entity_id===eid), c=curr.find(a=>a.entity_id===eid);
+        if(!c) return '';
+        const delta = p ? +(c.current - p.current).toFixed(2) : null;
+        const cls = delta===null?'neu':delta>0?'pos':delta<0?'neg':'neu';
+        const sign = delta!==null&&delta>0?'+':'';
+        return `<div class="lh-delta-cell">
+          <div class="lh-delta-entity">${eid}</div>
+          <div class="lh-delta-val ${cls}">${delta!==null?sign+delta.toFixed(2):c.current.toFixed(2)}</div>
+          <div class="lh-delta-sub">${delta!==null?'Δ vs prev · now '+c.current.toFixed(1)+'×':'current '+c.current.toFixed(1)+'× ROAS'}</div>
+        </div>`;
+      }).join('');
+    }
+  }
+
+  // ── Line chart ──
+  const canvas = document.getElementById('lhChart');
+  if(!canvas) return;
+  // Defer until the element has been laid out and has real width
+  const doDrawChart = () => {
+  const W = canvas.parentElement.offsetWidth || 0;
+  if(W < 10){ requestAnimationFrame(doDrawChart); return; }
+  const H = 280;
+  canvas.width  = W * (window.devicePixelRatio||1);
+  canvas.height = H * (window.devicePixelRatio||1);
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(window.devicePixelRatio||1, window.devicePixelRatio||1);
+
+  const PAD = {top:28, right:20, bottom:44, left:44};
+  const cw = W-PAD.left-PAD.right, ch = H-PAD.top-PAD.bottom;
+  ctx.clearRect(0,0,W,H);
+
+  const allVals = hist.flatMap(h=>h.anoms.map(a=>a.current)).filter(Number.isFinite);
+  if(!allVals.length) return;
+  const minV = Math.max(0, Math.min(...allVals)-0.8);
+  const maxV = Math.max(...allVals)+0.8;
+
+  const xOf = i => PAD.left + (hist.length<2 ? cw/2 : i/(hist.length-1)*cw);
+  const yOf = v => PAD.top + ch - ((v-minV)/(maxV-minV))*ch;
+
+  // Grid lines + Y labels
+  for(let i=0;i<=4;i++){
+    const y=PAD.top+ch/4*i, val=maxV-(maxV-minV)*(i/4);
+    ctx.beginPath(); ctx.strokeStyle='rgba(242,240,235,0.06)'; ctx.lineWidth=1;
+    ctx.moveTo(PAD.left,y); ctx.lineTo(PAD.left+cw,y); ctx.stroke();
+    ctx.fillStyle='rgba(242,240,235,0.3)'; ctx.font='9px monospace'; ctx.textAlign='right';
+    ctx.fillText(val.toFixed(1)+'×', PAD.left-6, y+3);
+  }
+
+  // X labels
+  hist.forEach((h,i)=>{
+    const x=xOf(i);
+    ctx.fillStyle='rgba(242,240,235,0.35)'; ctx.font='9px monospace'; ctx.textAlign='center';
+    ctx.fillText(h.label||('Loop '+h.loop), x, H-10);
+    ctx.beginPath(); ctx.strokeStyle='rgba(242,240,235,0.05)'; ctx.lineWidth=1;
+    ctx.moveTo(x,PAD.top); ctx.lineTo(x,PAD.top+ch); ctx.stroke();
+  });
+
+  // Lines per entity
+  allEntities.forEach((eid,ei)=>{
+    const color = ENTITY_COLORS[ei%ENTITY_COLORS.length];
+    const pts = hist.map((h,li)=>{ const a=h.anoms.find(x=>x.entity_id===eid); return a?{x:xOf(li),y:yOf(a.current),v:a.current}:null; });
+    const valid = pts.filter(Boolean);
+    if(!valid.length) return;
+
+    // Area
+    ctx.save(); ctx.globalAlpha=0.07; ctx.beginPath();
+    ctx.moveTo(valid[0].x, PAD.top+ch);
+    valid.forEach(p=>ctx.lineTo(p.x,p.y));
+    ctx.lineTo(valid[valid.length-1].x, PAD.top+ch);
+    ctx.closePath(); ctx.fillStyle=color; ctx.fill(); ctx.restore();
+
+    // Line
+    ctx.beginPath(); ctx.strokeStyle=color; ctx.lineWidth=1.5;
+    ctx.lineJoin='round'; ctx.lineCap='round';
+    valid.forEach((p,pi)=>pi===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
+    ctx.stroke();
+
+    // Dots + value labels
+    valid.forEach(p=>{
+      ctx.beginPath(); ctx.arc(p.x,p.y,3.5,0,Math.PI*2);
+      ctx.fillStyle=color; ctx.fill();
+      ctx.fillStyle='rgba(242,240,235,0.65)'; ctx.font='9px monospace'; ctx.textAlign='center';
+      ctx.fillText(p.v.toFixed(1)+'×', p.x, p.y-10);
+    });
+  });
+  }; // end doDrawChart
+
+  // Legend (DOM, not canvas — always visible)
+  const legendEl = $('#lhLegend');
+  if(legendEl){
+    legendEl.innerHTML=allEntities.map((eid,ei)=>
+      `<div class="lh-legend-item"><span class="lh-legend-dot" style="background:${ENTITY_COLORS[ei%ENTITY_COLORS.length]}"></span>${eid}</div>`
+    ).join('');
+  }
+
+  // Draw chart deferred (needs real layout width)
+  requestAnimationFrame(doDrawChart);
 }
 
 async function loadSide(){
@@ -1944,7 +2146,9 @@ animateCounters();
 initParticles();
 initDataStreams();
 window.addEventListener('scroll',onScroll,{passive:true});
+window.addEventListener('resize',()=>renderLoopHistory());
 onScroll();
+renderLoopHistory();
 setInterval(ping,15000);
 // Fetch client config (OR key) from backend — silently no-ops if backend is down
 fetch(($('#apiUrl').value||'http://localhost:8000').trim().replace(/\/$/,'') + '/config/client')

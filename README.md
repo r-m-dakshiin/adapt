@@ -24,7 +24,7 @@ ADAPT is a full-stack autonomous advertising optimisation system. It continuousl
                                  │
                         ┌────────────────┐
                         │  FastAPI       │
-                        │  + Supabase    │
+                        │  in-memory     │
                         └────────────────┘
                                  │
                         ┌────────────────┐
@@ -33,7 +33,7 @@ ADAPT is a full-stack autonomous advertising optimisation system. It continuousl
                         └────────────────┘
 ```
 
-**Stack:** Python 3.11 · FastAPI · Pandas/NumPy/SciPy · Scikit-learn · OpenRouter (nvidia/nemotron) · Supabase · Native C NN (optional) · Vanilla JS frontend
+**Stack:** Python 3.11 · FastAPI · Pandas/NumPy/SciPy · Scikit-learn · OpenRouter (nvidia/nemotron) · In-memory store · Native C NN (optional) · Vanilla JS frontend
 
 ---
 
@@ -49,7 +49,7 @@ pip install -r requirements.txt
 
 # 3. Configure environment
 cp .env.example .env
-# Edit .env — set OPENROUTER_API_KEY and optionally SUPABASE_URL/KEY
+# Edit .env — set OPENROUTER_API_KEY
 
 # 4. Generate mock data
 python scripts/generate_mock_data.py
@@ -82,9 +82,7 @@ Copy `.env.example` to `.env` and fill in:
 |---|---|---|
 | `OPENROUTER_API_KEY` | OpenRouter API key for LLM reasoning | Yes |
 | `LLM_MODEL` | Model slug, e.g. `nvidia/nemotron-3.5-lightning:free` | Yes |
-| `LLM_PROVIDER` | `openrouter` · `gemini` · `openai` | Yes |
-| `SUPABASE_URL` | Supabase project URL | Optional |
-| `SUPABASE_KEY` | Supabase anon or service key | Optional |
+| `LLM_PROVIDER` | `openrouter` | Yes |
 | `META_ACCESS_TOKEN` | Meta Graph API token for live execution | Optional |
 | `GOOGLE_ADS_TOKEN` | Google Ads API token | Optional |
 | `NN_LIBRARY_PATH` | Path to compiled `libnn.so` | Optional |
@@ -101,7 +99,7 @@ Copy `.env.example` to `.env` and fill in:
 adapt/
 ├── app/
 │   ├── config.py              # Pydantic settings — reads from .env
-│   ├── database.py            # Supabase client + fallback in-memory store
+│   ├── database.py            # In-memory store for events, recommendations, executions, feedback
 │   ├── main.py                # FastAPI app, scheduler, CORS, router registration
 │   ├── schemas.py             # Pydantic request/response models
 │   ├── ingestion/
@@ -134,7 +132,6 @@ adapt/
 │   └── build_nn.sh            # Compiles native/nn.c → native/libnn.so
 ├── native/                    # Compiled C shared library (gitignored)
 ├── index.html                 # Single-file dashboard — no build step
-├── supabase_schema.sql        # Run in Supabase SQL editor to provision tables
 ├── requirements.txt
 ├── Makefile
 └── .env.example
@@ -230,16 +227,9 @@ A single-file vanilla JS dashboard — no bundler, no framework, no build step.
 
 ---
 
-## Supabase Setup
+## Storage
 
-Run `supabase_schema.sql` in the Supabase SQL editor. Tables provisioned:
-
-- `engine_events` — all pipeline events with kind, entity, severity, payload
-- `recommendations` — LLM-generated recommendations with status tracking
-- `executions` — platform API call records with request/response
-- `outcome_feedback` — pre/post metric values and computed uplift
-
-If `SUPABASE_URL` / `SUPABASE_KEY` are empty, the engine falls back to an in-memory store and logs a warning — useful for local development without a Supabase project.
+All data (events, recommendations, executions, feedback) is stored in-memory in `app/database.py`. State resets on server restart. This is intentional — ADAPT is a decision engine, not a database. If you need persistence, the store interface is simple enough to swap for SQLite or any other backend.
 
 ---
 

@@ -1,10 +1,39 @@
 import logging
+from datetime import datetime, timezone
 
-from app.database import insert_recommendation
 from app.intelligence import anomaly, causal, scoring
 from app.intelligence.llm_agent import reason
 
 logger = logging.getLogger(__name__)
+
+# In-process recommendation store — resets on restart
+_recommendations: list[dict] = []
+_rec_seq = 0
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def store_recommendation(rec: dict) -> dict:
+    global _rec_seq
+    _rec_seq += 1
+    row = {"id": _rec_seq, "created_at": _now(), "status": "pending", **rec}
+    _recommendations.append(row)
+    return row
+
+
+def get_recommendations(status: str | None = None) -> list[dict]:
+    if status:
+        return [r for r in reversed(_recommendations) if r.get("status") == status]
+    return list(reversed(_recommendations))
+
+
+def set_recommendation_status(rec_id: int, status: str):
+    for r in _recommendations:
+        if r.get("id") == rec_id:
+            r["status"] = status
+            return
 
 
 def diagnose(df):
@@ -40,8 +69,7 @@ def diagnose(df):
             "rationale": r.get("rationale", ""),
             "metadata": {"source": "llm"},
         }
-        saved = insert_recommendation(row)
-        persisted.append(saved or row)
+        persisted.append(store_recommendation(row))
 
     return {
         "anomalies": anomalies,

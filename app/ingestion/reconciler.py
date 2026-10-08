@@ -13,7 +13,6 @@ import numpy as np
 import pandas as pd
 
 from app.ingestion import loader
-from app.database import log_event
 
 logger = logging.getLogger(__name__)
 
@@ -167,23 +166,6 @@ def build_unified_frame() -> pd.DataFrame:
     logger.info(
         "Unified frame built: %d rows in %.1f ms", len(unified), duration_ms
     )
-
-    # ---- 7. Emit observability event (DB is optional) ----
-    try:
-        log_event(
-            kind="ingest",
-            entity_type="system",
-            entity_id="reconciler",
-            payload={
-                "rows_ads": int(len(ads)),
-                "rows_sales": int(len(sales)),
-                "rows_ga": int(len(ga)),
-                "rows_unified": int(len(unified)),
-                "duration_ms": round(duration_ms, 2),
-            },
-        )
-    except Exception as e:  # never let logging kill the request
-        logger.warning("log_event failed: %s", e)
 
     return unified
 
