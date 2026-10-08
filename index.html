@@ -1311,26 +1311,92 @@ const demoApi = async (p,o) => {
 
 /* ── LLM analyse — proxied through backend so key stays server-side ── */
 async function llmAnalyse(anomalies, drivers, executions) {
-  const resp = await fetch(baseUrl() + '/llm/analyse', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ anomalies, drivers, executions: executions || [] }),
-  });
-  if (!resp.ok) throw new Error('LLM proxy: ' + resp.status);
-  const data = await resp.json();
-  // Backend returns { narrative, recommendations }
-  // Normalise recommendations to match frontend shape
-  const recs = (data.recommendations || []).map((r, i) => ({
-    id: Date.now() + i,
-    action: r.action || 'reallocate',
-    from_entity: r.from_entity || r.entity_id || null,
-    to_entity: r.to_entity || null,
-    delta_budget: Math.abs(r.delta_budget || 0),
-    confidence: r.confidence || 0.7,
-    rationale: r.rationale || '',
-    status: 'pending',
-  }));
-  return { narrative: data.narrative || '', recommendations: recs };
+  const OR_KEY = 'REDACTED';
+  const OR_MODEL = 'nvidia/nemotron-3.5-lightning:free';
+
+  const anomSummary = anomalies.map(a =>
+    `${a.entity_id}: ${a.metric} ${a.delta_pct>0?'+':''}${(+a.delta_pct||0).toFixed(0)}% (z=${(+a.z_score||0).toFixed(1)}, ${a.severity})`
+  ).join('\n');
+  const drvSummary = drivers.map(d => `${d.driver}: ${(+d.correlation||0).toFixed(2)}`).join(', ');
+  const execSummary = (executions||[]).length
+    ? executions.map(e=>`${e.move}${e.out?' → uplift '+e.out.uplift?.toFixed(1)+'%':''}`).join('\n')
+    : 'none';
+
+  const prompt = `You are an autonomous D2C ad-spend engine. Return ONLY raw JSON, no markdown.
+
+ANOMALIES:\n${anomSummary}
+DRIVERS (correlation with ROAS): ${drvSummary}
+RECENT EXECUTIONS:\n${execSummary}
+
+JSON shape:
+{"narrative":"<2-3 sentence briefing>","recommendations":[{"id":<int>,"action":"<reallocate|reduce|increase|pause>","from_entity":"<platform|SKU or null>","to_entity":"<platform|SKU or null>","delta_budget":<INR int 5000-25000>,"confidence":<0.0-1.0>,"rationale":"<one sentence>"}]}
+
+Rules: 2-4 recs, confidence reflects z-score, return ONLY the JSON.`;
+
+  // Demo mode — call OpenRouter directly with a hard 10s timeout
+  // Live mode — proxy through backend (key stays server-side)
+  if ($('#demoMode').checked) {
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 10000);
+    try {
+      const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        signal: ctrl.signal,
+        headers: {
+          'Authorization': `Bearer ${OR_KEY}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'http://localhost:8000',
+          'X-Title': 'ADAPT',
+        },
+        body: JSON.stringify({
+          model: OR_MODEL,
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.35,
+          max_tokens: 700,
+        }),
+      });
+      clearTimeout(tid);
+      if (!resp.ok) throw new Error('OR ' + resp.status);
+      const data = await resp.json();
+      const raw = (data.choices?.[0]?.message?.content||'').trim()
+        .replace(/^```[a-z]*\n?/,'').replace(/\n?```$/,'').trim();
+      const parsed = JSON.parse(raw);
+      const recs = (parsed.recommendations||[]).map((r,i)=>({
+        id: Date.now()+i, action:r.action||'reallocate',
+        from_entity:r.from_entity||null, to_entity:r.to_entity||null,
+        delta_budget:Math.abs(r.delta_budget||0), confidence:r.confidence||0.7,
+        rationale:r.rationale||'', status:'pending',
+      }));
+      return { narrative: parsed.narrative||'', recommendations: recs };
+    } catch(e) {
+      clearTimeout(tid);
+      throw e;
+    }
+  }
+
+  // Live mode — backend proxy (no key in frontend)
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 30000);
+  try {
+    const resp = await fetch(baseUrl() + '/llm/analyse', {
+      method: 'POST', signal: ctrl.signal,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ anomalies, drivers, executions: executions||[] }),
+    });
+    clearTimeout(tid);
+    if (!resp.ok) throw new Error('LLM proxy: ' + resp.status);
+    const data = await resp.json();
+    const recs = (data.recommendations||[]).map((r,i)=>({
+      id: Date.now()+i, action:r.action||'reallocate',
+      from_entity:r.from_entity||r.entity_id||null, to_entity:r.to_entity||null,
+      delta_budget:Math.abs(r.delta_budget||0), confidence:r.confidence||0.7,
+      rationale:r.rationale||'', status:'pending',
+    }));
+    return { narrative: data.narrative||'', recommendations: recs };
+  } catch(e) {
+    clearTimeout(tid);
+    throw e;
+  }
 }
 
 const baseUrl = () => ($('#apiUrl').value||'http://localhost:8000').trim().replace(/\/$/,'');
