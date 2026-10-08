@@ -548,9 +548,16 @@ button.cta:hover:not(:disabled) { background: var(--ink2); border-color: var(--i
 
 /* ── Prose ── */
 .prose {
-  font-size: 15px;
-  line-height: 1.85;
+  font-size: 14px;
+  line-height: 1.8;
   color: var(--ink2);
+  font-weight: 300;
+}
+.prose + .prose { margin-top: 10px; }
+/* First sentence of the briefing stands out */
+#narr p.prose:first-child {
+  font-size: 15px;
+  color: var(--ink);
   font-weight: 300;
 }
 
@@ -1279,7 +1286,7 @@ const demoApi = async (p,o) => {
 
     // Try LLM for narrative + recommendations
     try {
-      const llm = await llmAnalyse(anomalies, drivers, S.execs, S.execs.filter(e=>e.out));
+      const llm = await llmAnalyse(anomalies, drivers, S.execs);
       const recs = (llm.recommendations||[]).map(r=>({...r, status:'pending'}));
       DEMO.recs = recs;
       return { anomalies, drivers, narrative: llm.narrative, recommendations: recs, top_opportunities };
@@ -1302,77 +1309,28 @@ const demoApi = async (p,o) => {
   throw new Error('Not available in demo');
 };
 
-/* ── OpenRouter LLM — called directly from frontend in demo mode ── */
-const OR_KEY = 'REDACTED_KEY';
-const OR_MODEL = 'nvidia/nemotron-3.5-lightning:free';
-
-async function llmAnalyse(anomalies, drivers, executions, feedback) {
-  const anomSummary = anomalies.map(a =>
-    `${a.entity_id}: ${a.metric} ${a.delta_pct>0?'+':''}${a.delta_pct}% (z=${a.z_score}, ${a.severity})`
-  ).join('\n');
-  const drvSummary = drivers.map(d => `${d.driver}: correlation ${d.correlation}`).join(', ');
-  const execSummary = executions && executions.length
-    ? executions.map(e => `${e.move} — ${e.out ? 'ROAS uplift: '+e.out.uplift?.toFixed(1)+'%' : 'no outcome logged'}`).join('\n')
-    : 'None yet';
-  const fbSummary = feedback && feedback.length
-    ? feedback.map(f => `${f.move}: pre=${f.pre}, post ROAS logged`).join('\n')
-    : 'None';
-
-  const prompt = `You are an autonomous D2C ad-spend optimisation engine. Analyse the following data and return a JSON object (no markdown, no explanation — raw JSON only).
-
-ANOMALIES:
-${anomSummary}
-
-DRIVERS (correlation with ROAS):
-${drvSummary}
-
-RECENT EXECUTIONS:
-${execSummary}
-
-Return this exact JSON shape:
-{
-  "narrative": "<2-3 sentence plain-English briefing of the current situation and what changed>",
-  "recommendations": [
-    {
-      "id": <integer starting from ${Date.now() % 1000}>,
-      "action": "<reallocate|reduce|increase|pause>",
-      "from_entity": "<platform|SKU or null>",
-      "to_entity": "<platform|SKU or null>",
-      "delta_budget": <integer INR amount>,
-      "confidence": <0.0-1.0>,
-      "rationale": "<one clear sentence why>"
-    }
-  ]
-}
-
-Rules:
-- Generate 2-4 recommendations based purely on the anomaly data
-- confidence should reflect z-score magnitude
-- delta_budget in INR (5000–25000 range)
-- from_entity/to_entity use format "platform|SKU" or null
-- Return ONLY the JSON, nothing else`;
-
-  const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+/* ── LLM analyse — proxied through backend so key stays server-side ── */
+async function llmAnalyse(anomalies, drivers, executions) {
+  const resp = await fetch(baseUrl() + '/llm/analyse', {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${OR_KEY}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'http://localhost:8000',
-      'X-Title': 'ADAPT Engine',
-    },
-    body: JSON.stringify({
-      model: OR_MODEL,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.4,
-      max_tokens: 800,
-    }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ anomalies, drivers, executions: executions || [] }),
   });
-  if (!resp.ok) throw new Error('OpenRouter: ' + resp.status);
+  if (!resp.ok) throw new Error('LLM proxy: ' + resp.status);
   const data = await resp.json();
-  const raw = data.choices?.[0]?.message?.content?.trim() || '';
-  // Strip any accidental markdown fences
-  const clean = raw.replace(/^```[a-z]*\n?/,'').replace(/\n?```$/,'').trim();
-  return JSON.parse(clean);
+  // Backend returns { narrative, recommendations }
+  // Normalise recommendations to match frontend shape
+  const recs = (data.recommendations || []).map((r, i) => ({
+    id: Date.now() + i,
+    action: r.action || 'reallocate',
+    from_entity: r.from_entity || r.entity_id || null,
+    to_entity: r.to_entity || null,
+    delta_budget: Math.abs(r.delta_budget || 0),
+    confidence: r.confidence || 0.7,
+    rationale: r.rationale || '',
+    status: 'pending',
+  }));
+  return { narrative: data.narrative || '', recommendations: recs };
 }
 
 const baseUrl = () => ($('#apiUrl').value||'http://localhost:8000').trim().replace(/\/$/,'');
@@ -1419,9 +1377,23 @@ function render(){
   $('#kpis').innerHTML=kpis.map(([l,v,s])=>`<div class="kpi-cell"><div class="kpi-lbl">${l}</div><div class="kpi-val ${loading?'sk':''}">${esc(String(v))}</div><div class="kpi-sub">${esc(s)}</div></div>`).join('');
 
   // Narrative
-  $('#narr').innerHTML=loading
-    ?'<div class="sk" style="height:13px;margin-bottom:10px;border-radius:2px"></div><div class="sk" style="height:13px;width:70%;border-radius:2px"></div>'
-    :narr?`<p class="prose">${esc(narr)}</p>`:'<div class="empty">Run a diagnosis</div>';
+  const narrEl = $('#narr');
+  if(loading){
+    narrEl.innerHTML='<div class="sk" style="height:13px;margin-bottom:10px;border-radius:2px"></div><div class="sk" style="height:13px;width:80%;border-radius:2px;margin-bottom:8px"></div><div class="sk" style="height:13px;width:55%;border-radius:2px"></div>';
+  } else if(narr){
+    // Split on newlines, render each non-empty segment as its own paragraph
+    // Use textContent per node so special chars render correctly without XSS risk
+    narrEl.innerHTML='';
+    narr.split(/\n+/).filter(s=>s.trim()).forEach(seg=>{
+      const p=document.createElement('p');
+      p.className='prose';
+      p.style.marginBottom='10px';
+      p.textContent=seg.trim();
+      narrEl.appendChild(p);
+    });
+  } else {
+    narrEl.innerHTML='<div class="empty">Run a diagnosis</div>';
+  }
 
   // Drivers
   $('#dfor').textContent=anoms[0]?'for '+anoms[0].entity_id:'';

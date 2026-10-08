@@ -9,7 +9,7 @@ from app.config import settings
 from app.database import log_event
 from app.execution.decision_engine import diagnose
 from app.ingestion.reconciler import build_unified_frame
-from app.routers import ingest, diagnose as diagnose_router, execute, feed
+from app.routers import ingest, diagnose as diagnose_router, execute, feed, llm as llm_router
 
 logging.basicConfig(level=settings.LOG_LEVEL)
 logger = logging.getLogger(__name__)
@@ -60,6 +60,7 @@ app.include_router(ingest.router)
 app.include_router(diagnose_router.router)
 app.include_router(execute.router)
 app.include_router(feed.router)
+app.include_router(llm_router.router)
 
 @app.post("/simulate/loop")
 async def simulate_loop():
